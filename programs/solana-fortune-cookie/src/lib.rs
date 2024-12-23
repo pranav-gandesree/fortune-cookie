@@ -1,5 +1,7 @@
+// declare_id!("5o9iyA2bASAmQYNCUa7rPLRjVmSUSpD2d17Kun1bV8U5");
+
+
 use anchor_lang::prelude::*;
-use anchor_lang::solana_program::sysvar::clock::Clock;
 
 declare_id!("5o9iyA2bASAmQYNCUa7rPLRjVmSUSpD2d17Kun1bV8U5");
 
@@ -7,32 +9,44 @@ declare_id!("5o9iyA2bASAmQYNCUa7rPLRjVmSUSpD2d17Kun1bV8U5");
 pub mod solana_fortune_cookie {
     use super::*;
 
-    pub fn get_fortune(ctx: Context<Initialize>, fee:u64) -> Result<()> {
+    // Instruction to generate a fortune
+    pub fn generate_fortune(ctx: Context<GenerateFortune>, fee: u64) -> Result<()> {
         let user_fortune = &mut ctx.accounts.user_fortune;
 
+        // Ensure fee is sufficient
         if fee < 10_000_000 { // Example: 0.01 SOL
             return err!(ErrorCode::InsufficientFee);
         }
 
-        // Fetch randomness (e.g., from Clock Sysvar)
-    let clock: Clock = Clock::get().unwrap();
-    let random_seed = clock.unix_timestamp;
-    let index = (random_seed % FORTUNES.len() as i64) as usize;
+        // Fetch randomness using Clock Sysvar
+        let clock: Clock = Clock::get().unwrap();
+        let random_seed = clock.unix_timestamp;
+        let index = (random_seed % FORTUNES.len() as i64) as usize;
 
-    // Update user fortune
-    user_fortune.authority = ctx.accounts.user.key();
-    user_fortune.fortune = FORTUNES[index].to_string();
+        // Update the user's fortune account
+        user_fortune.authority = ctx.accounts.user.key();
+        user_fortune.fortune = FORTUNES[index].to_string();
 
-  
-    // Log the generated fortune for debugging
-    msg!("Generated fortune for user {}: {}", ctx.accounts.user.key(), FORTUNES[index]);
+        // Log the generated fortune for debugging
+        msg!("Generated fortune for user {}: {}", ctx.accounts.user.key(), FORTUNES[index]);
 
-    Ok(())
+        // Transfer the fee to the treasury account
+        let ix = anchor_lang::solana_program::system_instruction::transfer(
+            &ctx.accounts.user.key(),
+            &ctx.accounts.treasury.key(),
+            fee,
+        );
+        anchor_lang::solana_program::program::invoke(
+            &ix,
+            &[
+                ctx.accounts.user.to_account_info(),
+                ctx.accounts.treasury.to_account_info(),
+            ],
+        )?;
 
+        Ok(())
     }
 }
-
-
 
 // Constants: Predefined list of fortunes
 pub const FORTUNES: [&str; 5] = [
@@ -43,13 +57,13 @@ pub const FORTUNES: [&str; 5] = [
     "Be brave, fortune favors the bold!",
 ];
 
-
+// Accounts for the `generate_fortune` instruction
 #[derive(Accounts)]
 pub struct GenerateFortune<'info> {
     #[account(
         init,
         payer = user,
-        space = 8 + 32 + 280, // 8 bytes for account discriminator, 32 for Pubkey, 280 for string
+        space = 8 + 32 + 280, // 8 bytes for discriminator, 32 for Pubkey, 280 for string
         seeds = [b"user-fortune", user.key().as_ref()],
         bump
     )]
@@ -58,14 +72,17 @@ pub struct GenerateFortune<'info> {
     #[account(mut)]
     pub user: Signer<'info>,
 
+    #[account(mut)]
+    pub treasury: SystemAccount<'info>,
+
     pub system_program: Program<'info, System>,
 }
 
-
+// Data account structure for storing user-specific fortune data
 #[account]
 pub struct UserFortune {
-    pub authority: Pubkey, // The user's wallet address
-    pub fortune: String,   // The last fortune generated
+    pub authority: Pubkey, // User's wallet address
+    pub fortune: String,   // The user's last fortune
 }
 
 // Error codes
